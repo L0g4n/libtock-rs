@@ -10,6 +10,8 @@ core::arch::global_asm!(include_str!("asm_arm.s"));
 #[cfg(target_arch = "riscv32")]
 core::arch::global_asm!(include_str!("asm_riscv32.s"));
 
+static APP_HEAP_SIZE: Option<&'static str> = option_env!("APP_HEAP_SIZE");
+
 /// `set_main!` is used to tell `libtock_runtime` where the process binary's
 /// `main` function is. The process binary's `main` function must have the
 /// signature `FnOnce() -> T`, where T is some concrete type that implements
@@ -74,6 +76,7 @@ struct RtHeader {
     data_ram_start: *mut u8,
     bss_size: usize,
     bss_start: *mut u8,
+    heap_start: *mut u8,
 }
 
 // rust_start is the first Rust code to execute in the process. It is called
@@ -83,6 +86,8 @@ extern "C" fn rust_start() -> ! {
     extern "Rust" {
         fn libtock_unsafe_main() -> !;
         static rt_header: RtHeader;
+        #[cfg(feature = "alloc_init")]
+        fn libtock_alloc_init(heap_bottom: *mut u8, heap_size: usize);
     }
 
     // TODO: Implement a safe memop API in libtock_platform and migrate these
@@ -92,14 +97,39 @@ extern "C" fn rust_start() -> ! {
     // impact the execution of this process.
     #[cfg(not(feature = "no_debug_memop"))]
     unsafe {
+        // specify the top of the application stack which grows downwards
         TockSyscalls::syscall2::<{ syscall_class::MEMOP }>([
             10u32.into(),
             rt_header.stack_top.into(),
         ]);
+
+        // specify the start of the application heap which grows upwards
         TockSyscalls::syscall2::<{ syscall_class::MEMOP }>([
             11u32.into(),
             rt_header.initial_break.into(),
         ]);
+    }
+
+    #[cfg(feature = "alloc_init")]
+    {
+        let app_heap_size: usize = match APP_HEAP_SIZE {
+            Some(var) => var
+                .parse()
+                .ok()
+                .expect("could not parse APP_HEAP_SIZE as usize!"),
+            None => 9000,
+        };
+
+        let app_heap_bottom = unsafe { rt_header.heap_start };
+
+        let app_heap_end = unsafe { *app_heap_bottom as usize + app_heap_size };
+
+        unsafe {
+            // tell the kernel the new app heap break (which is the upper address bound of the process)
+            TockSyscalls::syscall2::<{ syscall_class::MEMOP }>([0u32.into(), app_heap_end.into()]);
+
+            libtock_alloc_init(app_heap_bottom, app_heap_size);
+        }
     }
 
     // Safety: libtock_unsafe_main is defined by the set_main! macro, and its
