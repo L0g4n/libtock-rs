@@ -76,7 +76,6 @@ struct RtHeader {
     data_ram_start: *mut u8,
     bss_size: usize,
     bss_start: *mut u8,
-    heap_start: *mut u8,
 }
 
 // rust_start is the first Rust code to execute in the process. It is called
@@ -120,9 +119,14 @@ extern "C" fn rust_start() -> ! {
             None => 9000,
         };
 
-        let app_heap_bottom = unsafe { rt_header.heap_start };
+        // the heap starts after the `bss` section
+        let app_heap_bottom = unsafe { rt_header.bss_start.add(rt_header.bss_size) };
 
-        let app_heap_end = unsafe { *app_heap_bottom as usize + app_heap_size };
+        assert_eq!(app_heap_bottom.addr(), unsafe {
+            rt_header.bss_start.addr() + rt_header.bss_size
+        });
+
+        let app_heap_end = unsafe { app_heap_bottom.add(app_heap_size) };
 
         unsafe {
             // tell the kernel the new app heap break (which is the upper address bound of the process)

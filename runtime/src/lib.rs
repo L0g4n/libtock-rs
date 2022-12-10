@@ -19,6 +19,7 @@
 //! and provide its own layout file.
 
 #![no_std]
+#![feature(strict_provenance)]
 #![warn(unsafe_op_in_unsafe_fn)]
 
 pub mod startup;
